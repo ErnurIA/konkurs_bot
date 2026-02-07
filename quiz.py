@@ -1,7 +1,7 @@
 import asyncio
 import random
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, PollAnswer
@@ -18,8 +18,9 @@ TEST_QUESTION_COUNT = 25
 
 # poll_id -> state
 poll_map: Dict[str, Dict[str, Any]] = {}
-# poll_id -> asyncio.Task
-poll_tasks: Dict[str, asyncio.Task] = {}
+
+# Один глобальный watcher (самый надёжный способ)
+_watcher_task: Optional[asyncio.Task] = None
 
 
 def pick_questions(class_num: int) -> List[Dict[str, Any]]:
@@ -52,33 +53,78 @@ async def _cleanup_poll(poll_id: str, bot: Bot):
     if not state:
         return
 
-    # stop timer
-    task = poll_tasks.pop(poll_id, None)
-    if task:
-        try:
-            task.cancel()
-        except Exception:
-            pass
+    chat_id = state.get("chat_id")
+    poll_msg_id = state.get("poll_msg_id")
 
-    chat_id = state["chat_id"]
-    poll_msg_id = state["poll_msg_id"]
-
-    # close poll
+    # close poll (на всякий случай)
     try:
-        await bot.stop_poll(chat_id, poll_msg_id)
+        if chat_id and poll_msg_id:
+            await bot.stop_poll(chat_id, poll_msg_id)
     except Exception:
         pass
 
     # delete poll message
     try:
-        await bot.delete_message(chat_id, poll_msg_id)
+        if chat_id and poll_msg_id:
+            await bot.delete_message(chat_id, poll_msg_id)
     except Exception:
         pass
 
     poll_map.pop(poll_id, None)
 
 
+async def _watch_expired(bot: Bot, user_data: Dict[int, Dict[str, Any]]):
+    """Железный автопереход: каждые 1 сек проверяет истекшие вопросы."""
+    try:
+        while True:
+            await asyncio.sleep(1)
+
+            if not poll_map:
+                continue
+
+            now = asyncio.get_running_loop().time()
+            expired = []
+
+            for poll_id, stp in list(poll_map.items()):
+                if stp.get("done"):
+                    continue
+                deadline = stp.get("deadline")
+                if deadline is not None and now >= deadline:
+                    expired.append(poll_id)
+
+            for poll_id in expired:
+                stp = poll_map.get(poll_id)
+                if not stp or stp.get("done"):
+                    continue
+
+                stp["done"] = True
+                uid = stp["uid"]
+                chat_id = stp["chat_id"]
+                idx = stp["idx"]
+
+                st = user_data.get(uid)
+                if st and st.get("quiz"):
+                    quiz = st["quiz"]
+                    # если пользователь всё ещё на этом вопросе — пропуск (минус)
+                    if quiz.get("idx") == idx:
+                        quiz["idx"] += 1
+
+                await _cleanup_poll(poll_id, bot)
+                await send_next_question(uid, chat_id, bot, user_data)
+
+    except Exception as e:
+        print("WATCHER ERROR:", repr(e))
+
+
+def _ensure_watcher(bot: Bot, user_data: Dict[int, Dict[str, Any]]):
+    global _watcher_task
+    if _watcher_task is None or _watcher_task.done():
+        _watcher_task = asyncio.create_task(_watch_expired(bot, user_data))
+
+
 async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[int, Dict[str, Any]]):
+    _ensure_watcher(bot, user_data)
+
     st = user_data.get(uid, {})
     quiz = st.get("quiz")
     if not quiz:
@@ -108,7 +154,6 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
     q_text = clean_question_text(item["q"])
     question = f"Сұрақ {idx + 1}/{total}\n\n{q_text}"
 
-    # 1) send poll
     poll_msg = await bot.send_poll(
         chat_id=chat_id,
         question=question,
@@ -116,13 +161,12 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
         type="quiz",
         correct_option_id=item["correct"],
         is_anonymous=False,
-        open_period=QUESTION_TIME_SEC,
+        open_period=QUESTION_TIME_SEC,  # оставляем таймер в UI
     )
 
     poll_id = poll_msg.poll.id
 
-    # 2) attach button UNDER THE POLL (edit reply markup of poll message)
-    # Telegram позволяет inline-клавиатуру на poll-сообщение через edit_message_reply_markup
+    # Кнопка пропуска
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Келесі сұрақ ➡️", callback_data=f"next:{poll_id}")]
@@ -130,7 +174,6 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
     try:
         await bot.edit_message_reply_markup(chat_id=chat_id, message_id=poll_msg.message_id, reply_markup=kb)
     except Exception:
-        # если клиент/ситуация не позволяет — кнопка может не прикрепиться
         pass
 
     poll_map[poll_id] = {
@@ -139,24 +182,8 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
         "poll_msg_id": poll_msg.message_id,
         "idx": idx,
         "done": False,
+        "deadline": asyncio.get_running_loop().time() + QUESTION_TIME_SEC + 1,  # +1 запас
     }
-
-    # 3) timeout -> skip -> next
-    async def _timeout():
-        await asyncio.sleep(QUESTION_TIME_SEC)
-        state = poll_map.get(poll_id)
-        if not state or state["done"]:
-            return
-
-        state["done"] = True
-        quiz2 = user_data.get(uid, {}).get("quiz")
-        if quiz2:
-            quiz2["idx"] += 1  # skip
-
-        await _cleanup_poll(poll_id, bot)
-        await send_next_question(uid, chat_id, bot, user_data)
-
-    poll_tasks[poll_id] = asyncio.create_task(_timeout())
 
 
 @router.callback_query(F.data == "start_test")
@@ -185,9 +212,6 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
 
 @router.poll_answer()
 async def on_poll_answer(poll_answer: PollAnswer, bot: Bot, user_data: Dict[int, Dict[str, Any]]):
-    # ДИАГНОСТИКА: если этот print не появляется в консоли — Telegram НЕ присылает poll_answer
-    print("POLL_ANSWER UPDATE RECEIVED")
-
     uid = poll_answer.user.id
     poll_id = poll_answer.poll_id
 
@@ -216,7 +240,8 @@ async def on_poll_answer(poll_answer: PollAnswer, bot: Bot, user_data: Dict[int,
     if selected is not None and selected == correct:
         quiz["score"] += 1
 
-    quiz["idx"] += 1
+    if quiz.get("idx") == idx:
+        quiz["idx"] += 1
 
     await asyncio.sleep(1.2)
 
@@ -244,7 +269,7 @@ async def on_next(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
 
     st = user_data.get(uid, {})
     quiz = st.get("quiz")
-    if quiz:
+    if quiz and quiz.get("idx") == state["idx"]:
         quiz["idx"] += 1  # skip
 
     await cb.answer()

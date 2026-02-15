@@ -1,10 +1,24 @@
+# quiz.py
+from __future__ import annotations
+
 import asyncio
 import random
 import re
+from datetime import datetime
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery, PollAnswer
+from aiogram.types import (
+    CallbackQuery,
+    PollAnswer,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+)
+
+from pdf_utils import AwardData, award_from_score, generate_award_pdf
+from sheets_logger import save_result
 
 try:
     from questions import QUESTIONS
@@ -19,29 +33,42 @@ TEST_QUESTION_COUNT = 25
 # poll_id -> state
 poll_map: Dict[str, Dict[str, Any]] = {}
 
-# Один глобальный watcher (самый надёжный способ)
+# Один глобальный watcher (автопереход по таймеру)
 _watcher_task: Optional[asyncio.Task] = None
 
 
 def pick_questions(class_num: int) -> List[Dict[str, Any]]:
-    pool = QUESTIONS.get(class_num, [])
-    if not pool:
+    """
+    Формат QUESTIONS: { class_num: {"easy": [...], "medium": [...], "hard": [...]} }.
+    Схема 10-12-3: перемешиваем каждую категорию, берём первые 10 easy, 12 medium, 3 hard.
+    Порядок в тесте: сначала лёгкие, потом средние, в конце сложные (всего 25).
+    При нехватке вопросов в категории берётся min(нужно, len(списка)) — бот не падает.
+    """
+    grade = QUESTIONS.get(class_num)
+    if not grade or not isinstance(grade, dict):
         return []
-    if len(pool) <= TEST_QUESTION_COUNT:
-        pool = pool.copy()
-        random.shuffle(pool)
-        return pool
-    return random.sample(pool, k=TEST_QUESTION_COUNT)
 
+    easy = list(grade.get("easy") or [])
+    medium = list(grade.get("medium") or [])
+    hard = list(grade.get("hard") or [])
 
-def diploma_degree(score: int) -> str:
-    if score >= 23:
-        return "I дәрежелі диплом"
-    if score >= 20:
-        return "II дәрежелі диплом"
-    if score >= 17:
-        return "III дәрежелі диплом"
-    return "Сертификат"
+    if not easy and not medium and not hard:
+        return []
+
+    random.shuffle(easy)
+    random.shuffle(medium)
+    random.shuffle(hard)
+
+    n_easy = min(10, len(easy))
+    n_med = min(12, len(medium))
+    n_hard = min(3, len(hard))
+
+    selected: List[Dict[str, Any]] = []
+    selected += easy[:n_easy]
+    selected += medium[:n_med]
+    selected += hard[:n_hard]
+
+    return selected
 
 
 def clean_question_text(q: str) -> str:
@@ -83,7 +110,7 @@ async def _watch_expired(bot: Bot, user_data: Dict[int, Dict[str, Any]]):
                 continue
 
             now = asyncio.get_running_loop().time()
-            expired = []
+            expired: List[str] = []
 
             for poll_id, stp in list(poll_map.items()):
                 if stp.get("done"):
@@ -105,8 +132,16 @@ async def _watch_expired(bot: Bot, user_data: Dict[int, Dict[str, Any]]):
                 st = user_data.get(uid)
                 if st and st.get("quiz"):
                     quiz = st["quiz"]
-                    # если пользователь всё ещё на этом вопросе — пропуск (минус)
                     if quiz.get("idx") == idx:
+                        qs = quiz["questions"]
+                        if idx < len(qs):
+                            item = qs[idx]
+                            question_num = idx + 1  # номер вопроса в сессии (1..25)
+                            q_text = clean_question_text(item.get("question") or item.get("q", ""))
+                            correct_text = item["options"][item["correct"]]
+                            quiz.setdefault("user_errors", []).append(
+                                f"{question_num}. {q_text} | О: Уақыт аяқталды | Пр: {correct_text}"
+                            )
                         quiz["idx"] += 1
 
                 await _cleanup_poll(poll_id, bot)
@@ -122,6 +157,48 @@ def _ensure_watcher(bot: Bot, user_data: Dict[int, Dict[str, Any]]):
         _watcher_task = asyncio.create_task(_watch_expired(bot, user_data))
 
 
+async def _send_award_pdf(
+    chat_id: int,
+    uid: int,
+    st: Dict[str, Any],
+    score: int,
+    total: int,
+    bot: Bot,
+):
+    """
+    Генерирует и отправляет PDF по готовым шаблонам:
+    assets/templates/diploma_I.pdf, diploma_II.pdf, diploma_III.pdf, certificate.pdf
+    Пишет ФИО на стр.1 и стр.2 (если есть).
+    """
+    award_code = award_from_score(score)  # "I" | "II" | "III" | "CERT"
+
+    data = AwardData(
+        full_name=st.get("full_name", ""),
+        grade=int(st.get("class")),
+        correct=score,
+        total=total,
+        award=award_code,
+        doc_no=str(uid),  # временно tg_id как номер
+        date_str=datetime.now().strftime("%d.%m.%Y"),
+    )
+
+    pdf_path = generate_award_pdf(data)
+    pdf_path = Path(pdf_path)
+
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    if pdf_path.stat().st_size == 0:
+        raise RuntimeError(f"PDF empty: {pdf_path}")
+
+    doc = FSInputFile(path=str(pdf_path), filename=pdf_path.name)
+    await bot.send_document(
+        chat_id=chat_id,
+        document=doc,
+        caption=("Сертификат" if award_from_score(score) == "CERT" else "Диплом"),
+    )
+    return pdf_path.name
+
+
 async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[int, Dict[str, Any]]):
     _ensure_watcher(bot, user_data)
 
@@ -134,45 +211,92 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
     qs = quiz["questions"]
     total = len(qs)
 
+    # ======== КОНЕЦ ТЕСТА ========
     if idx >= total:
         score = quiz["score"]
-        degree = diploma_degree(score)
+        award_code = award_from_score(score)
 
+        if award_code == "I":
+            result_text = "I дәрежелі Диплом"
+            wait_text = "Диплом 1 минут аралығында келеді"
+        elif award_code == "II":
+            result_text = "II дәрежелі Диплом"
+            wait_text = "Диплом 1 минут аралығында келеді"
+        elif award_code == "III":
+            result_text = "III дәрежелі Диплом"
+            wait_text = "Диплом 1 минут аралығында келеді"
+        else:
+            result_text = "Сертификат"
+            wait_text = "Сертификат 1 минут аралығында келеді"
+
+        # 1) сначала итоговое сообщение
         await bot.send_message(
             chat_id,
-            "Тест аяқталды!\n\n"
+            "✅ Тест аяқталды!\n\n"
             f"ФИО: {st.get('full_name', '')}\n"
             f"Сынып: {st.get('class', '')}\n"
             f"Дұрыс жауаптар: {score}/{total}\n"
-            f"Нәтиже: {degree}"
+            f"Нәтиже: {result_text}\n\n"
+            f"{wait_text}"
         )
+
+        # 2) потом PDF
+        try:
+            pdf_filename = await _send_award_pdf(chat_id=chat_id, uid=uid, st=st, score=score, total=total, bot=bot)
+            # Запись в Google Sheets только после успешной отправки PDF
+            errors_text = "\n".join(quiz.get("user_errors", [])) if quiz.get("user_errors") else "Ошибок нет"
+            try:
+                save_result(
+                    tg_id=uid,
+                    username=st.get("username", ""),
+                    full_name=st.get("full_name", ""),
+                    grade=st.get("class", ""),
+                    score=score,
+                    total=total,
+                    award=result_text,
+                    pdf_file=pdf_filename,
+                    errors_text=errors_text,
+                )
+            except Exception as e:
+                import traceback
+                print("Sheets save error:", e)
+                traceback.print_exc()
+        except Exception as e:
+            print("PDF ERROR:", repr(e))
+            await bot.send_message(chat_id, "⚠️ PDF жіберу кезінде қате шықты.")
+
         st["stage"] = "finished"
         st.pop("quiz", None)
         return
 
+    # ======== СЛЕД. ВОПРОС ========
     item = qs[idx]
-    q_text = clean_question_text(item["q"])
+
+    q_text = clean_question_text(item.get("question") or item.get("q", ""))
     question = f"Сұрақ {idx + 1}/{total}\n\n{q_text}"
 
     poll_msg = await bot.send_poll(
         chat_id=chat_id,
         question=question,
-        options=item["a"],
+        options=item["options"],
         type="quiz",
         correct_option_id=item["correct"],
         is_anonymous=False,
-        open_period=QUESTION_TIME_SEC,  # оставляем таймер в UI
+        open_period=QUESTION_TIME_SEC,  # таймер в UI
     )
 
     poll_id = poll_msg.poll.id
 
     # Кнопка пропуска
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Келесі сұрақ ➡️", callback_data=f"next:{poll_id}")]
     ])
     try:
-        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=poll_msg.message_id, reply_markup=kb)
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=poll_msg.message_id,
+            reply_markup=kb
+        )
     except Exception:
         pass
 
@@ -204,7 +328,7 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
         return
 
     st["stage"] = "in_test"
-    st["quiz"] = {"questions": picked, "idx": 0, "score": 0}
+    st["quiz"] = {"questions": picked, "idx": 0, "score": 0, "user_errors": []}
 
     await cb.answer()
     await send_next_question(uid, cb.message.chat.id, cb.bot, user_data)
@@ -233,12 +357,21 @@ async def on_poll_answer(poll_answer: PollAnswer, bot: Bot, user_data: Dict[int,
 
     idx = state["idx"]
     qs = quiz["questions"]
+    item = qs[idx]
 
     selected = poll_answer.option_ids[0] if poll_answer.option_ids else None
-    correct = qs[idx]["correct"]
+    correct = item["correct"]
 
     if selected is not None and selected == correct:
         quiz["score"] += 1
+    else:
+        question_num = idx + 1  # номер вопроса в сессии (1..25)
+        q_text = clean_question_text(item.get("question") or item.get("q", ""))
+        user_answer_text = item["options"][selected] if selected is not None else "Жауап берілмеді"
+        correct_text = item["options"][correct]
+        quiz.setdefault("user_errors", []).append(
+            f"{question_num}. {q_text} | О: {user_answer_text} | Пр: {correct_text}"
+        )
 
     if quiz.get("idx") == idx:
         quiz["idx"] += 1
@@ -270,7 +403,17 @@ async def on_next(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
     st = user_data.get(uid, {})
     quiz = st.get("quiz")
     if quiz and quiz.get("idx") == state["idx"]:
-        quiz["idx"] += 1  # skip
+        idx = state["idx"]
+        qs = quiz["questions"]
+        if idx < len(qs):
+            item = qs[idx]
+            question_num = idx + 1  # номер вопроса в сессии (1..25)
+            q_text = clean_question_text(item.get("question") or item.get("q", ""))
+            correct_text = item["options"][item["correct"]]
+            quiz.setdefault("user_errors", []).append(
+                f"{question_num}. {q_text} | О: Пропуск | Пр: {correct_text}"
+            )
+        quiz["idx"] += 1  # skip (минус)
 
     await cb.answer()
     await _cleanup_poll(poll_id, cb.bot)

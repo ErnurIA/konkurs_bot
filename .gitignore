@@ -1,4 +1,17 @@
-.venv/
-__pycache__/
+# Секреты (не коммитить в публичный репозиторий)
+google_credentials.json
 .env
+
+# Python
+__pycache__/
 *.pyc
+.venv/
+venv/
+
+# Артефакты и бэкапы
+out/
+*.pdf
+questions_OLD.py
+
+# IDE
+.vscode/

@@ -312,11 +312,24 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
 
 @router.callback_query(F.data == "start_test")
 async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
+    from access_control import can_take_test, use_attempt
+
     uid = cb.from_user.id
     st = user_data.get(uid)
 
     if not st or not st.get("class") or not st.get("full_name"):
         await cb.answer("Алдымен сынып пен ФИО енгізіңіз.", show_alert=True)
+        return
+
+    if not can_take_test(uid):
+        await cb.message.answer(
+            "Сіз бұл тестті тапсырдыңыз.\n"
+            "Қосымша мүмкіндік алу үшін ұйымдастырушыларға WhatsApp қа жазыңыз.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="WhatsApp", url="https://wa.me/77082443606?text=")]
+            ]),
+        )
+        await cb.answer()
         return
 
     class_num = int(st["class"])
@@ -327,6 +340,7 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
         await cb.answer()
         return
 
+    use_attempt(uid)
     st["stage"] = "in_test"
     st["quiz"] = {"questions": picked, "idx": 0, "score": 0, "user_errors": []}
 

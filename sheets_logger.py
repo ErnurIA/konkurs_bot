@@ -51,6 +51,17 @@ def _get_errors_sheet():
         return spreadsheet.add_worksheet(title="errors", rows=1000, cols=10)
 
 
+def _get_codes_sheet():
+    """Лист 'CODES' для кодов доступа (создаётся при первом обращении). Колонки: CODE, STATUS, CREATED_AT, USED_BY, USED_AT."""
+    spreadsheet = _get_spreadsheet()
+    try:
+        return spreadsheet.worksheet("CODES")
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title="CODES", rows=1000, cols=5)
+        ws.append_row(["CODE", "STATUS", "CREATED_AT", "USED_BY", "USED_AT"])
+        return ws
+
+
 def log_error(module: str, message: str, detail: str = ""):
     """Записать ошибку в Google Sheets (лист 'errors'). Не роняет бот при сбое."""
     try:
@@ -64,6 +75,36 @@ def log_error(module: str, message: str, detail: str = ""):
         sheet.append_row(row)
     except Exception as e:
         print("Sheets log_error failed:", e)
+
+
+def append_codes(codes: list, created_at: str):
+    """Добавить коды на лист CODES: каждая строка CODE | NEW | created_at | пусто | пусто. Не роняет бот при сбое."""
+    if not codes:
+        return
+    try:
+        sheet = _get_codes_sheet()
+        created_at_str = created_at if isinstance(created_at, str) else datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [[c, "NEW", created_at_str, "", ""] for c in codes]
+        sheet.append_rows(rows, value_input_option="USER_ENTERED")
+    except Exception as e:
+        print("Sheets append_codes failed:", e)
+
+
+def update_code_used(code: str, user_id: int, used_at: str):
+    """Найти код на листе CODES, выставить STATUS=USED, USED_BY, USED_AT, оформить строку красным и зачёркнутым. Не роняет бот при сбое."""
+    try:
+        sheet = _get_codes_sheet()
+        cell = sheet.find(code, in_column=1)
+        row = cell.row
+        sheet.update_cell(row, 2, "USED")
+        sheet.update_cell(row, 4, str(user_id))
+        sheet.update_cell(row, 5, used_at)
+        sheet.format(
+            f"A{row}:E{row}",
+            {"textFormat": {"foregroundColor": {"red": 1, "green": 0, "blue": 0}, "strikethrough": True}},
+        )
+    except Exception as e:
+        print("Sheets update_code_used failed:", e)
 
 
 def get_sheet():

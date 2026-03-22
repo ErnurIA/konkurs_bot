@@ -4,8 +4,10 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 
+import Admin
 import flow
 import quiz
 
@@ -31,12 +33,13 @@ ADMIN_IDS = [573722456]
 
 # Создаем бота и диспетчер
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
 # Общее хранилище данных
 user_data = {}
 
-# Подключаем роутеры
+# Подключаем роутеры (Admin первым: у flow есть широкий @router.message())
+dp.include_router(Admin.router)
 dp.include_router(flow.router)
 dp.include_router(quiz.router)
 

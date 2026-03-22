@@ -121,7 +121,7 @@ async def on_class_selected(cb: CallbackQuery, user_data: Dict[int, Dict[str, An
 # -------------------
 # Ввод ФИО и проверка кода доступа
 # -------------------
-@router.message()
+@router.message(F.text & ~F.text.startswith("/"))
 async def on_fullname(message: Message, user_data: Dict[int, Dict[str, Any]]):
     uid = message.from_user.id
     st = user_data.get(uid)

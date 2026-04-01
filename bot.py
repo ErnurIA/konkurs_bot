@@ -13,6 +13,7 @@ import quiz
 
 from access_control import init_access_db, create_access_codes
 from services.codes_sheet import add_codes_to_sheet
+from config import ADMIN_IDS
 
 
 # Загружаем .env
@@ -25,10 +26,6 @@ init_access_db()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не найден. Проверь файл .env")
-
-
-# ID администратора (твой Telegram ID)
-ADMIN_IDS = [573722456]
 
 
 # Создаем бота и диспетчер

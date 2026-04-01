@@ -112,12 +112,19 @@ async def generate_pdf(message: Message, state: FSMContext):
         caption = "Сертификат" if award == "CERT" else "Диплом"
 
         await message.answer("📄 Құжат дайындалуда...")
-        await message.bot.send_document(
-            chat_id=message.chat.id,
-            document=file,
-            caption=caption,
-            request_timeout=60
-        )
+        for attempt in range(3):
+            try:
+                await message.bot.send_document(
+                    chat_id=message.chat.id,
+                    document=file,
+                    caption=caption,
+                    request_timeout=60
+                )
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(1.5)
 
         try:
             overlay_path.unlink(missing_ok=True)

@@ -74,45 +74,57 @@ async def generate_pdf(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
 
-    award_map = {
-        "/d1": "I",
-        "/d2": "II",
-        "/d3": "III",
-        "/cert": "CERT"
-    }
-
-    raw = (message.text or "").strip()
-    cmd = raw.split("@", 1)[0].strip()
-
-    if cmd not in award_map:
-        await message.answer("Выбери: /d1 /d2 /d3 /cert")
-        return
-
-    data = await state.get_data()
-    full_name = data["full_name"]
-
-    award = award_map[cmd]
-
-    pdf_data = AwardData(
-        full_name=full_name,
-        grade=1,
-        correct=25,
-        total=25,
-        award=award,
-        doc_no="auto",
-        date_str="2026"
-    )
-
-    pdf_path_str, overlay_path_str = await asyncio.to_thread(generate_award_pdf, pdf_data)
-    p = Path(pdf_path_str)
-    overlay_path = Path(overlay_path_str)
-    doc = FSInputFile(path=str(p.resolve()), filename=p.name)
-
-    await message.answer_document(doc)
-
     try:
-        overlay_path.unlink(missing_ok=True)
-    except Exception:
-        pass
+        award_map = {
+            "/d1": "I",
+            "/d2": "II",
+            "/d3": "III",
+            "/cert": "CERT"
+        }
 
-    await state.clear()
+        raw = (message.text or "").strip()
+        cmd = raw.split("@", 1)[0].strip()
+
+        if cmd not in award_map:
+            await message.answer("Выбери: /d1 /d2 /d3 /cert")
+            return
+
+        data = await state.get_data()
+        full_name = data["full_name"]
+
+        award = award_map[cmd]
+
+        pdf_data = AwardData(
+            full_name=full_name,
+            grade=1,
+            correct=25,
+            total=25,
+            award=award,
+            doc_no="auto",
+            date_str="2026"
+        )
+
+        pdf_path_str, overlay_path_str = await asyncio.to_thread(generate_award_pdf, pdf_data)
+        p = Path(pdf_path_str)
+        overlay_path = Path(overlay_path_str)
+        pdf_path = str(p.resolve())
+        file = FSInputFile(pdf_path)
+        caption = "Сертификат" if award == "CERT" else "Диплом"
+
+        await message.answer("📄 Құжат дайындалуда...")
+        await message.bot.send_document(
+            chat_id=message.chat.id,
+            document=file,
+            caption=caption,
+            request_timeout=60
+        )
+
+        try:
+            overlay_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        await state.clear()
+    except Exception as e:
+        print("PDF ERROR:", repr(e))
+        await message.answer(f"Ошибка PDF: {e}")

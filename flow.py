@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Any
 import re
 
@@ -146,5 +147,5 @@ async def on_fullname(message: Message, user_data: Dict[int, Dict[str, Any]]):
         from services.codes_sheet import mark_code_used
         ok, msg = activate_code(uid, raw)
         if ok:
-            mark_code_used(raw, uid)
+            await asyncio.to_thread(mark_code_used, raw, uid)
         await message.answer(msg)

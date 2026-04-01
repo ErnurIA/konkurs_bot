@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from aiogram import Router
@@ -7,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
 from pdf_utils import AwardData, generate_award_pdf
+from access_control import create_access_codes
 
 router = Router()
 
@@ -33,6 +35,24 @@ async def start_pdf(message: Message, state: FSMContext):
 
     await message.answer("Напиши ФИО:")
     await state.set_state(AdminStates.waiting_name)
+
+
+@router.message(Command("codes5"))
+async def codes5(message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    codes = create_access_codes(50, bonus_attempts=5)
+    await message.answer("\n".join(codes))
+
+
+@router.message(Command("codes10"))
+async def codes10(message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    codes = create_access_codes(50, bonus_attempts=10)
+    await message.answer("\n".join(codes))
 
 
 # Временный DEBUG: смотри консоль при /pdf (не трогаем остальные сообщения — см. порядок router в bot.py)
@@ -83,10 +103,16 @@ async def generate_pdf(message: Message, state: FSMContext):
         date_str="2026"
     )
 
-    pdf_path = generate_award_pdf(pdf_data)
-    p = Path(pdf_path)
+    pdf_path_str, overlay_path_str = await asyncio.to_thread(generate_award_pdf, pdf_data)
+    p = Path(pdf_path_str)
+    overlay_path = Path(overlay_path_str)
     doc = FSInputFile(path=str(p.resolve()), filename=p.name)
 
     await message.answer_document(doc)
+
+    try:
+        overlay_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
     await state.clear()

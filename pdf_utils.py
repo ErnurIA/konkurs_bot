@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import uuid
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
@@ -213,7 +214,7 @@ def _make_overlay_pages(
 
 
 # ================== MAIN ==================
-def generate_award_pdf(data: AwardData, out_dir: str = "out") -> str:
+def generate_award_pdf(data: AwardData, out_dir: str = "out") -> tuple[str, str]:
     if not data.full_name:
         raise ValueError("full_name is empty")
 
@@ -225,8 +226,9 @@ def generate_award_pdf(data: AwardData, out_dir: str = "out") -> str:
     # 🔥 ГЛАВНОЕ: получаем нормальный номер
     number = _get_next_number(data.award)
 
-    out_file = out_dir_p / f"award_{number}_{data.award}.pdf"
-    overlay_file = out_dir_p / f"_overlay_{number}.pdf"
+    file_uuid = uuid.uuid4().hex
+    out_file = out_dir_p / f"award_{file_uuid}.pdf"
+    overlay_file = out_dir_p / f"_overlay_{file_uuid}.pdf"
 
     reader = PdfReader(str(template))
     if not reader.pages:
@@ -259,9 +261,4 @@ def generate_award_pdf(data: AwardData, out_dir: str = "out") -> str:
     if not out_file.exists() or out_file.stat().st_size == 0:
         raise RuntimeError(f"Final PDF not created: {out_file}")
 
-    try:
-        overlay_file.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-    return str(out_file.resolve())
+    return str(out_file.resolve()), str(overlay_file.resolve())

@@ -182,20 +182,41 @@ async def _send_award_pdf(
         date_str=datetime.now().strftime("%d.%m.%Y"),
     )
 
-    pdf_path = generate_award_pdf(data)
-    pdf_path = Path(pdf_path)
+    pdf_path_str, overlay_path_str = await asyncio.to_thread(
+        generate_award_pdf, data
+    )
+    pdf_path = Path(pdf_path_str)
+    overlay_path = Path(overlay_path_str)
 
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
     if pdf_path.stat().st_size == 0:
         raise RuntimeError(f"PDF empty: {pdf_path}")
 
+    await asyncio.sleep(0.3)
+
     doc = FSInputFile(path=str(pdf_path), filename=pdf_path.name)
-    await bot.send_document(
-        chat_id=chat_id,
-        document=doc,
-        caption=("Сертификат" if award_from_score(score) == "CERT" else "Диплом"),
-    )
+    caption = "Сертификат" if award_from_score(score) == "CERT" else "Диплом"
+    for attempt in range(3):
+        try:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=doc,
+                caption=caption,
+            )
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1.5)
+    try:
+        pdf_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        overlay_path.unlink(missing_ok=True)
+    except Exception:
+        pass
     return pdf_path.name
 
 
@@ -246,7 +267,8 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
             # Запись в Google Sheets только после успешной отправки PDF
             errors_text = "\n".join(quiz.get("user_errors", [])) if quiz.get("user_errors") else "Ошибок нет"
             try:
-                save_result(
+                await asyncio.to_thread(
+                    save_result,
                     tg_id=uid,
                     username=st.get("username", ""),
                     full_name=st.get("full_name", ""),
@@ -390,7 +412,7 @@ async def on_poll_answer(poll_answer: PollAnswer, bot: Bot, user_data: Dict[int,
     if quiz.get("idx") == idx:
         quiz["idx"] += 1
 
-    await asyncio.sleep(1.2)
+    await asyncio.sleep(0.6)
 
     await _cleanup_poll(poll_id, bot)
     await send_next_question(uid, state["chat_id"], bot, user_data)

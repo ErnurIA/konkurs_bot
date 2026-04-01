@@ -51,7 +51,7 @@ async def admin_codes(message: Message):
         return
 
     codes = create_access_codes(100)
-    add_codes_to_sheet(codes)
+    await asyncio.to_thread(add_codes_to_sheet, codes)
 
     text = "Сгенерировано 100 кодов доступа:\n\n" + "\n".join(codes)
 

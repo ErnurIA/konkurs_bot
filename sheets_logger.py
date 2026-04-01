@@ -112,7 +112,10 @@ def get_sheet():
 
 
 def save_result(tg_id, username, full_name, grade, score, total, award, pdf_file, errors_text=""):
-    sheet = get_sheet()
+    if "Сертификат" in award:
+        sheet = _get_spreadsheet().worksheet("Сертификат")
+    else:
+        sheet = get_sheet()
     # Колонки A–I (1–9): дата, tg_id, username, full_name, grade, score, total, award, pdf_file
     # Колонка J (10): errors_text — детализация ошибок ученика
     row = [

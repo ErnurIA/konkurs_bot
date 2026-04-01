@@ -104,6 +104,7 @@ async def generate_pdf(message: Message, state: FSMContext):
             date_str="2026"
         )
 
+        print("PDF START ADMIN")
         generated = await asyncio.to_thread(generate_award_pdf, pdf_data)
         if isinstance(generated, tuple):
             pdf_path_str, overlay_path_str = generated

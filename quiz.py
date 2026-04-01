@@ -206,8 +206,6 @@ async def _send_award_pdf(
     if pdf_path.stat().st_size == 0:
         raise RuntimeError(f"PDF empty: {pdf_path}")
 
-    await asyncio.sleep(0.3)
-
     doc = FSInputFile(path=str(pdf_path), filename=pdf_path.name)
     caption = "Сертификат" if award_from_score(score) == "CERT" else "Диплом"
     for attempt in range(3):

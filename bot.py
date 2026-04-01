@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 
+import secret_admin
 import Admin
 import flow
 import quiz
@@ -35,7 +36,8 @@ dp = Dispatcher(storage=MemoryStorage())
 # Общее хранилище данных
 user_data = {}
 
-# Подключаем роутеры (Admin первым: у flow есть широкий @router.message())
+# Подключаем роутеры (secret_admin раньше flow: иначе текст кода перехватывается как access code)
+dp.include_router(secret_admin.router)
 dp.include_router(Admin.router)
 dp.include_router(flow.router)
 dp.include_router(quiz.router)

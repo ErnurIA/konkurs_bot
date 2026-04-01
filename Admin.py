@@ -121,7 +121,6 @@ async def generate_pdf(message: Message, state: FSMContext):
         file = FSInputFile(pdf_path)
         caption = "Сертификат" if award == "CERT" else "Диплом"
 
-        await message.answer("📄 Құжат дайындалуда...")
         for attempt in range(3):
             try:
                 await message.bot.send_document(

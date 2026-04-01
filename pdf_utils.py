@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
-import uuid
+import os
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
@@ -16,6 +16,17 @@ from pypdf import PdfReader, PdfWriter
 
 # ================== BASE DIR ==================
 BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+# Старый путь (мог быть в git — при pull перезаписывался); мигрируем один раз в data/
+LEGACY_COUNTER_FILE = BASE_DIR / "counter.json"
+
+
+def _counter_file_path() -> Path:
+    """Постоянный счётчик: не хранить в отслеживаемом git файле. Опционально: KONKURS_COUNTER_FILE=/abs/path.json"""
+    raw = (os.environ.get("KONKURS_COUNTER_FILE") or "").strip()
+    if raw:
+        return Path(raw)
+    return DATA_DIR / "counter.json"
 
 
 # ================== DATA ==================
@@ -94,19 +105,34 @@ def _register_number_font() -> str:
 
 
 # ================== COUNTER ==================
-COUNTER_FILE = BASE_DIR / "counter.json"
-
-
 def _load_counter():
-    if not COUNTER_FILE.exists():
-        data = {"diploma": 1, "certificate": 1}
-        COUNTER_FILE.write_text(json.dumps(data))
-        return data
-    return json.loads(COUNTER_FILE.read_text())
+    path = _counter_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    # Однократная миграция с корня проекта (старый counter.json)
+    if LEGACY_COUNTER_FILE.exists():
+        text = LEGACY_COUNTER_FILE.read_text(encoding="utf-8")
+        _atomic_write(path, text)
+        return json.loads(text)
+
+    data = {"diploma": 1, "certificate": 1}
+    _save_counter(data)
+    return data
 
 
-def _save_counter(data):
-    COUNTER_FILE.write_text(json.dumps(data))
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _save_counter(data) -> None:
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    _atomic_write(_counter_file_path(), text)
 
 
 def _get_next_number(award: str) -> int:
@@ -223,12 +249,13 @@ def generate_award_pdf(data: AwardData, out_dir: str = "out") -> tuple[str, str]
     out_dir_p = BASE_DIR / out_dir
     out_dir_p.mkdir(parents=True, exist_ok=True)
 
-    # 🔥 ГЛАВНОЕ: получаем нормальный номер
+    # 🔥 ГЛАВНОЕ: получаем нормальный номер (тот же, что внутри PDF: 04d / 05d)
     number = _get_next_number(data.award)
 
-    file_uuid = uuid.uuid4().hex
-    out_file = out_dir_p / f"award_{file_uuid}.pdf"
-    overlay_file = out_dir_p / f"_overlay_{file_uuid}.pdf"
+    # Имя файла = номер диплома/сертификата + тип, напр. award_652_II.pdf
+    award_tag = data.award  # "I" | "II" | "III" | "CERT"
+    out_file = out_dir_p / f"award_{number}_{award_tag}.pdf"
+    overlay_file = out_dir_p / f"_overlay_{number}_{award_tag}.pdf"
 
     reader = PdfReader(str(template))
     if not reader.pages:

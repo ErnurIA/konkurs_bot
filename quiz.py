@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from aiogram import Router, F, Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     CallbackQuery,
     PollAnswer,
@@ -26,6 +27,18 @@ except Exception:
     QUESTIONS = {}
 
 router = Router()
+
+
+async def _safe_cb_answer(cb: CallbackQuery, *args, **kwargs) -> None:
+    """answerCallbackQuery истекает ~30 с — не роняем апдейт из‑за старого нажатия."""
+    try:
+        await cb.answer(*args, **kwargs)
+    except TelegramBadRequest as e:
+        err = (getattr(e, "message", None) or str(e)).lower()
+        if "query is too old" in err or "query id is invalid" in err:
+            return
+        raise
+
 
 QUESTION_TIME_SEC = 90
 TEST_QUESTION_COUNT = 25
@@ -340,7 +353,7 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
     st = user_data.get(uid)
 
     if not st or not st.get("class") or not st.get("full_name"):
-        await cb.answer("Алдымен сынып пен ФИО енгізіңіз.", show_alert=True)
+        await _safe_cb_answer(cb, "Алдымен сынып пен ФИО енгізіңіз.", show_alert=True)
         return
 
     if not can_take_test(uid):
@@ -351,7 +364,7 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
                 [InlineKeyboardButton(text="WhatsApp", url="https://wa.me/77082443606?text=")]
             ]),
         )
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
 
     class_num = int(st["class"])
@@ -359,14 +372,14 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
 
     if not picked:
         await cb.message.answer("Бұл сыныпқа сұрақтар әлі қосылмаған. (questions.py керек)")
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
 
     use_attempt(uid)
     st["stage"] = "in_test"
     st["quiz"] = {"questions": picked, "idx": 0, "score": 0, "user_errors": []}
 
-    await cb.answer()
+    await _safe_cb_answer(cb)
     await send_next_question(uid, cb.message.chat.id, cb.bot, user_data)
 
 
@@ -425,13 +438,13 @@ async def on_next(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
 
     state = poll_map.get(poll_id)
     if not state:
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
     if state["uid"] != uid:
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
     if state["done"]:
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
 
     state["done"] = True
@@ -451,6 +464,6 @@ async def on_next(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
             )
         quiz["idx"] += 1  # skip (минус)
 
-    await cb.answer()
+    await _safe_cb_answer(cb)
     await _cleanup_poll(poll_id, cb.bot)
     await send_next_question(uid, state["chat_id"], cb.bot, user_data)

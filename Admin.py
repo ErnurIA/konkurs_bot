@@ -104,9 +104,14 @@ async def generate_pdf(message: Message, state: FSMContext):
             date_str="2026"
         )
 
-        pdf_path_str, overlay_path_str = await asyncio.to_thread(generate_award_pdf, pdf_data)
+        generated = await asyncio.to_thread(generate_award_pdf, pdf_data)
+        if isinstance(generated, tuple):
+            pdf_path_str, overlay_path_str = generated
+            overlay_path = Path(overlay_path_str)
+        else:
+            pdf_path_str = generated
+            overlay_path = None
         p = Path(pdf_path_str)
-        overlay_path = Path(overlay_path_str)
         pdf_path = str(p.resolve())
         file = FSInputFile(pdf_path)
         caption = "Сертификат" if award == "CERT" else "Диплом"
@@ -126,10 +131,11 @@ async def generate_pdf(message: Message, state: FSMContext):
                     raise
                 await asyncio.sleep(1.5)
 
-        try:
-            overlay_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        if overlay_path is not None:
+            try:
+                overlay_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         await state.clear()
     except Exception as e:

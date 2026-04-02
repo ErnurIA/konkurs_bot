@@ -153,7 +153,8 @@ def activate_code(user_id: int, code: str) -> Tuple[bool, str]:
             (row["bonus_attempts"], now, user_id),
         )
         conn.commit()
-        return True, "Сізге қосымша 1 мүмкіндік берілді."
+        n = int(row["bonus_attempts"])
+        return True, f"Сізге қосымша {n} мүмкіндік берілді."
     finally:
         conn.close()
 

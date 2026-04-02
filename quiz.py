@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import traceback
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -290,9 +291,8 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
                     pdf_file=pdf_filename,
                     errors_text=errors_text,
                 )
-            except Exception as e:
-                import traceback
-                print("Sheets save error:", e)
+            except Exception:
+                print("quiz: save_result failed")
                 traceback.print_exc()
         except Exception as e:
             print("PDF ERROR:", repr(e))

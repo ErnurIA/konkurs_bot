@@ -4,6 +4,7 @@
 или по названию SPREADSHEET_NAME.
 """
 import os
+import traceback
 import gspread
 from pathlib import Path
 from datetime import datetime
@@ -112,22 +113,54 @@ def get_sheet():
 
 
 def save_result(tg_id, username, full_name, grade, score, total, award, pdf_file, errors_text=""):
-    if "Сертификат" in award:
-        sheet = _get_spreadsheet().worksheet("Сертификат")
+    try:
+        if "Сертификат" in award:
+            sheet = _get_spreadsheet().worksheet("Сертификат")
+        else:
+            sheet = get_sheet()
+        print("SHEET OPENED:", sheet.title)
+        # Колонки A–I (1–9): дата, tg_id, username, full_name, grade, score, total, award, pdf_file
+        # Колонка J (10): errors_text — детализация ошибок ученика
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(tg_id) if tg_id is not None else "",
+            str(username) if username else "",
+            str(full_name) if full_name else "",
+            str(grade) if grade is not None else "",
+            int(score) if score is not None else 0,
+            int(total) if total is not None else 0,
+            str(award) if award else "",
+            str(pdf_file) if pdf_file else "",
+            str(errors_text) if errors_text else "",
+        ]
+        sheet.append_row(row)
+        print("APPEND SUCCESS")
+    except Exception:
+        print("SAVE_RESULT ERROR")
+        traceback.print_exc()
+        raise
+
+
+def test_google_sheets():
+    print("TEST START")
+    sid = os.environ.get("SPREADSHEET_ID", "").strip()
+    print("SPREADSHEET_ID:", sid)
+
+    # Тот же файл, что и у бота: корень проекта (рядом с bot.py)
+    creds = Credentials.from_service_account_file(
+        str(_CREDS_PATH),
+        scopes=SCOPE,
+    )
+    client = gspread.authorize(creds)
+
+    if sid:
+        sheet = client.open_by_key(sid).sheet1
     else:
-        sheet = get_sheet()
-    # Колонки A–I (1–9): дата, tg_id, username, full_name, grade, score, total, award, pdf_file
-    # Колонка J (10): errors_text — детализация ошибок ученика
-    row = [
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        str(tg_id) if tg_id is not None else "",
-        str(username) if username else "",
-        str(full_name) if full_name else "",
-        str(grade) if grade is not None else "",
-        int(score) if score is not None else 0,
-        int(total) if total is not None else 0,
-        str(award) if award else "",
-        str(pdf_file) if pdf_file else "",
-        str(errors_text) if errors_text else "",
-    ]
-    sheet.append_row(row)
+        sheet = client.open(SPREADSHEET_NAME).sheet1
+
+    sheet.append_row(["TEST"])
+    print("APPEND SUCCESS")
+
+
+if __name__ == "__main__":
+    test_google_sheets()

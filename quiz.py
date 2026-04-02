@@ -276,6 +276,26 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
         # 2) потом PDF
         try:
             pdf_filename = await _send_award_pdf(chat_id=chat_id, uid=uid, st=st, score=score, total=total, bot=bot)
+            if award_code in ["I", "II", "III"]:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="WhatsApp",
+                        url="https://wa.me/77082443606"
+                    )]
+                ])
+
+                await bot.send_message(
+                    chat_id,
+                    "🏆 Құттықтаймыз!\n\n"
+                    "Құрметті, Ата-ана, ұстаз!\n"
+                    "Сіздің балаңыз олимпиададан жүлделі орынға ие болып, "
+                    "Астана қаласында өтетін Республикалық Форумға жолдама алды!\n\n"
+                    "Форумға тіркелу үшін WhatsApp-қа жазыңыз!\n"
+                    "Анықтама үшін: +7 708 244 3606",
+                    reply_markup=kb
+                )
             # Запись в Google Sheets только после успешной отправки PDF
             errors_text = "\n".join(quiz.get("user_errors", [])) if quiz.get("user_errors") else "Ошибок нет"
             try:

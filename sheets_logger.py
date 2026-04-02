@@ -1,7 +1,6 @@
 """
 Запись результатов теста в Google Sheets.
-Таблица: по SPREADSHEET_ID из .env (из URL https://docs.google.com/spreadsheets/d/<ID>/edit)
-или по названию SPREADSHEET_NAME.
+Таблица: SPREADSHEET_ID из .env или значение по умолчанию (open_by_key).
 """
 import os
 import traceback
@@ -14,6 +13,8 @@ from google.oauth2.service_account import Credentials
 
 load_dotenv()
 
+SPREADSHEET_ID = (os.environ.get("SPREADSHEET_ID") or "").strip() or "1_TCx7_9uPLHhdpPfM1RQYY-XgVlEFblbM_ytwyQYg9c"
+
 SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -21,7 +22,6 @@ SCOPE = [
 
 # Путь к ключу: корень проекта (рядом с bot.py и sheets_logger.py)
 _CREDS_PATH = Path(__file__).resolve().parent / "google_credentials.json"
-SPREADSHEET_NAME = "konkurs_bot_results"
 
 
 def _get_client():
@@ -37,10 +37,7 @@ def test_sheets_connection():
 
 def _get_spreadsheet():
     client = _get_client()
-    spreadsheet_id = os.environ.get("SPREADSHEET_ID", "").strip()
-    if spreadsheet_id:
-        return client.open_by_key(spreadsheet_id)
-    return client.open(SPREADSHEET_NAME)
+    return client.open_by_key(SPREADSHEET_ID)
 
 
 def _get_errors_sheet():
@@ -143,8 +140,7 @@ def save_result(tg_id, username, full_name, grade, score, total, award, pdf_file
 
 def test_google_sheets():
     print("TEST START")
-    sid = os.environ.get("SPREADSHEET_ID", "").strip()
-    print("SPREADSHEET_ID:", sid)
+    print("SPREADSHEET_ID:", SPREADSHEET_ID)
 
     # Тот же файл, что и у бота: корень проекта (рядом с bot.py)
     creds = Credentials.from_service_account_file(
@@ -153,10 +149,7 @@ def test_google_sheets():
     )
     client = gspread.authorize(creds)
 
-    if sid:
-        sheet = client.open_by_key(sid).sheet1
-    else:
-        sheet = client.open(SPREADSHEET_NAME).sheet1
+    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
 
     sheet.append_row(["TEST"])
     print("APPEND SUCCESS")

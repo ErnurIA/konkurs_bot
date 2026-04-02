@@ -5,3 +5,5 @@ __pycache__/
 counter.json
 data/counter.json
 google_credentials.json
+data/
+*.db

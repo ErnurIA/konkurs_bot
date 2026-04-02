@@ -1,6 +1,7 @@
-﻿.env
+.env
 __pycache__/
 *.pyc
 # Counter files - do not commit
 counter.json
 data/counter.json
+google_credentials.json

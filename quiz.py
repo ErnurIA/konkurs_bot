@@ -277,8 +277,6 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
         try:
             pdf_filename = await _send_award_pdf(chat_id=chat_id, uid=uid, st=st, score=score, total=total, bot=bot)
             if award_code in ["I", "II", "III"]:
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(
                         text="WhatsApp",

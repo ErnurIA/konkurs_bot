@@ -302,7 +302,7 @@ async def send_next_question(uid: int, chat_id: int, bot: Bot, user_data: Dict[i
                 await asyncio.to_thread(
                     save_result,
                     tg_id=uid,
-                    username=st.get("username", ""),
+                    username=st.get("phone") or "",
                     full_name=st.get("full_name", ""),
                     grade=st.get("class", ""),
                     score=score,

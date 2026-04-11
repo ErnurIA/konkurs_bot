@@ -4,9 +4,16 @@ import re
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 router = Router()
+
+
+class Form(StatesGroup):
+    waiting_name = State()
+    waiting_phone = State()
 
 # -------------------
 # Кнопки
@@ -38,8 +45,9 @@ def kb_start_test() -> InlineKeyboardMarkup:
 # /start
 # -------------------
 @router.message(CommandStart())
-async def start(message: Message, user_data: Dict[int, Dict[str, Any]]):
+async def start(message: Message, state: FSMContext, user_data: Dict[int, Dict[str, Any]]):
     uid = message.from_user.id
+    await state.clear()
 
     user_data[uid] = {
         "stage": "start",
@@ -104,7 +112,7 @@ async def join(cb: CallbackQuery):
 # Выбор класса
 # -------------------
 @router.callback_query(F.data.startswith("class_"))
-async def on_class_selected(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
+async def on_class_selected(cb: CallbackQuery, state: FSMContext, user_data: Dict[int, Dict[str, Any]]):
     uid = cb.from_user.id
     if uid not in user_data:
         user_data[uid] = {"stage": "start", "class": None, "full_name": None}
@@ -113,11 +121,48 @@ async def on_class_selected(cb: CallbackQuery, user_data: Dict[int, Dict[str, An
     user_data[uid]["class"] = class_num
     user_data[uid]["stage"] = "await_fullname"
 
+    await state.set_state(Form.waiting_name)
     await cb.message.answer(
         "Байқауға қатысушының толық аты-жөнін жазыңыз:\n"
         "(Дипломға Сіз жазған ТАЖ жазылады)"
     )
     await cb.answer()
+
+
+# -------------------
+# ФИО → WhatsApp нөмірі → тест
+# -------------------
+@router.message(Form.waiting_name, F.text & ~F.text.startswith("/"))
+async def get_name(message: Message, state: FSMContext, user_data: Dict[int, Dict[str, Any]]):
+    uid = message.from_user.id
+    st = user_data.get(uid)
+    if not st:
+        user_data[uid] = {"stage": "start", "class": None, "full_name": None}
+        st = user_data[uid]
+
+    full_name = (message.text or "").strip()
+    if len(full_name) < 5:
+        await message.answer("Толық аты-жөніңізді дұрыс жазыңыз (кемінде 5 таңба).")
+        return
+    st["full_name"] = full_name
+    await message.answer("Ата-ананың немесе жетекшінің WhatsApp нөмірін жазыңыз:")
+    await state.set_state(Form.waiting_phone)
+
+
+@router.message(Form.waiting_phone, F.text & ~F.text.startswith("/"))
+async def get_phone(message: Message, state: FSMContext, user_data: Dict[int, Dict[str, Any]]):
+    uid = message.from_user.id
+    st = user_data.get(uid)
+    if not st:
+        await state.clear()
+        return
+
+    phone = re.sub(r"\D", "", message.text or "")
+    st["phone"] = phone
+    st["stage"] = "ready_for_test"
+    await message.answer("Деректер қабылданды. Тестті бастауға болады", reply_markup=kb_start_test())
+    await state.clear()
+
 
 # -------------------
 # Ввод ФИО и проверка кода доступа
@@ -126,19 +171,6 @@ async def on_class_selected(cb: CallbackQuery, user_data: Dict[int, Dict[str, An
 async def on_fullname(message: Message, user_data: Dict[int, Dict[str, Any]]):
     uid = message.from_user.id
     st = user_data.get(uid)
-
-    if st and st.get("stage") == "await_fullname":
-        full_name = (message.text or "").strip()
-        if len(full_name) < 5:
-            await message.answer("Толық аты-жөніңізді дұрыс жазыңыз (кемінде 5 таңба).")
-            return
-        st["full_name"] = full_name
-        st["stage"] = "ready_for_test"
-        await message.answer(
-            "Деректер қабылданды. Тестті бастауға болады:",
-            reply_markup=kb_start_test()
-        )
-        return
 
     # Проверка одноразового кода (любое сообщение 8 символов A-Z/0-9)
     raw = (message.text or "").strip().upper()

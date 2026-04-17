@@ -377,7 +377,7 @@ async def start_test(cb: CallbackQuery, user_data: Dict[int, Dict[str, Any]]):
     if not can_take_test(uid):
         await cb.message.answer(
             "Сіз бұл тестті тапсырдыңыз.\n"
-            "Қосымша мүмкіндік алу үшін ұйымдастырушыларға WhatsApp қа жазыңыз.",
+            "Астана қаласында өтетін республикалық форумға тіркелу үшін WhatsApp қа жазыңыз.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="WhatsApp", url="https://wa.me/77082443606?text=")]
             ]),
